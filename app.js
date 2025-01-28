@@ -56,6 +56,7 @@ CREATE TABLE IF NOT EXISTS tags (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     imageId INTEGER NOT NULL,
     tag TEXT NOT NULL,
+    dateAdded DATETIME DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(imageId, tag),
     FOREIGN KEY (imageId) REFERENCES images(id) ON DELETE CASCADE
 );
@@ -71,7 +72,8 @@ app.use(express.json());
 
 // Parse date from filename or use file's last modified time
 function parseDateFromFilename(filename) {
-    const regex = /PXL_(\d{8})_(\d{6})\d{3}/;
+    // Prefix could be IMG, MVIMG, PXL, etc. Example: PXL_12345678_123456123.jpg
+    const regex = /^.*_(\d{8})_(\d{6})\d{3}/;
     const match = filename.match(regex);
     if (match) {
         const dateStr = match[1] + match[2];
@@ -154,7 +156,7 @@ function watchDirectory() {
 
 // Get all files in ID order
 app.get('/api/images/all', (req, res) => {
-    db.all('SELECT * FROM images ORDER BY id ASC', [], (err, rows) => {
+    db.all('SELECT * FROM images ORDER BY dateTaken ASC', [], (err, rows) => {
         if (err) {
             res.status(500).json({ error: 'Database error' });
         } else {
@@ -302,7 +304,7 @@ app.get('/api/images/filter', (req, res) => {
     }
 
     // Add month condition
-    query += ` ${monthCondition} GROUP BY images.id`;
+    query += ` ${monthCondition} GROUP BY images.id ORDER BY images.dateTaken`;
 
     // Parameters for the query
     const params = [...includeTagsArray, ...excludeTagsArray, ...requiredTagsArray];
