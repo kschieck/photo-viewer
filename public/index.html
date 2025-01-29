@@ -166,20 +166,33 @@
             padding: 10px;
             cursor: pointer;
         }
+
+        .expandable {
+            margin-bottom: 1em;
+        }
+
+        .expandable-content {
+            padding: 0 15px;
+            display: none;
+            overflow: hidden;
+            background-color: #f1f1f1;
+        }
     </style>
 </head>
 
 <body>
     <h1>Image Viewer</h1>
-    <form id="filter-form">
-        <h2>Tags</h2>
-        <div id="tags-container" class="form-group"></div>
+    <h2>Tags</h2>
+    <div id="tags-container" class="form-group"></div>
+    <button class="expandable">More</button>
+    <div class="expandable-content">
         <h2>Months</h2>
         <div id="months-container" class="form-group"></div>
         <h2>Years</h2>
         <div id="years-container" class="form-group"></div>
-        <button click="">Load Images</button>
-    </form>
+    </div>
+    <br />
+    <button id="load-images">Load Images</button>
 
     <button id="load-untagged">Load Untagged Images</button>
     <div id="images"></div>
@@ -218,6 +231,7 @@
             const prevButton = document.getElementById("prev");
             const nextButton = document.getElementById("next");
             const loadUntaggedButton = document.getElementById("load-untagged");
+            const loadImagesButton = document.getElementById("load-images");
 
             const selectedIncludeTags = new Set();
             const selectedRequiredTags = new Set();
@@ -432,9 +446,7 @@
                 focusedView.style.display = 'none';
             });
 
-            // Form submission
-            document.getElementById("filter-form").addEventListener("submit", async (e) => {
-                e.preventDefault();
+            loadImagesButton.addEventListener("click", async (e) => {
                 const filters = {
                     includeTags: Array.from(selectedIncludeTags).join(','),
                     excludeTags: Array.from(selectedExcludeTags).join(','),
@@ -455,6 +467,12 @@
             // Slideshow buttons
             slideshowBtn.addEventListener('click', () => startSlideshow(false));
             randomSlideshowBtn.addEventListener('click', () => startSlideshow(true));
+
+            document.querySelector(".expandable").addEventListener("click", function (event) {
+                event.target.style.display = "none";
+                const content = this.nextElementSibling;
+                content.style.display = content.style.display === "block" ? "none" : "block";
+            });
 
             const startSlideshow = (randomize) => {
                 const images = Array.from(imagesContainer.querySelectorAll('img'));
