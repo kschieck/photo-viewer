@@ -190,7 +190,7 @@ app.get('/thumbnails/:filename', (req, res) => {
 app.get('/api/images/date-range', (req, res) => {
     const { startDate, endDate } = req.query;
     db.all(
-        'SELECT * FROM images WHERE dateTaken BETWEEN ? AND ?',
+        'SELECT * FROM images WHERE dateTaken BETWEEN ? AND ? ORDER BY dateTaken ASC',
         [startDate, endDate],
         (err, rows) => {
             if (err) {
@@ -214,7 +214,7 @@ app.get('/api/images/month', (req, res) => {
     const paddedMonth = month.padStart(2, '0');
 
     db.all(
-        `SELECT * FROM images WHERE strftime('%m', dateTaken) = ?`,
+        `SELECT * FROM images WHERE strftime('%m', dateTaken) = ? ORDER BY dateTaken ASC`,
         [paddedMonth],
         (err, rows) => {
             if (err) {
@@ -240,7 +240,8 @@ app.get('/api/images/tags', (req, res) => {
     db.all(
         `SELECT DISTINCT images.* FROM images 
          JOIN tags ON images.id = tags.imageId 
-         WHERE tags.tag IN (${placeholders})`,
+         WHERE tags.tag IN (${placeholders})
+         ORDER BY images.dateTaken ASC`,
         tags,
         (err, rows) => {
             if (err) {
@@ -254,14 +255,20 @@ app.get('/api/images/tags', (req, res) => {
 
 // Endpoint to filter images by includeTags, excludeTags, and optionally selectedMonth
 app.get('/api/images/filter', (req, res) => {
-    const { includeTags, excludeTags, requiredTags, selectedMonth } = req.query;
+    const { includeTags, excludeTags, requiredTags, selectedMonths, selectedYears } = req.query;
 
     // Parse and validate input
     const includeTagsArray = includeTags ? includeTags.split(',') : [];
     const excludeTagsArray = excludeTags ? excludeTags.split(',') : [];
     const requiredTagsArray = requiredTags ? requiredTags.split(',') : [];
-    const monthCondition = selectedMonth
-        ? `AND strftime('%m', dateTaken) = '${String(selectedMonth).padStart(2, '0')}'`
+    const selectedMonthsArray = selectedMonths ? selectedMonths.split(',') : [];
+    const selectedYearsArray = selectedYears ? selectedYears.split(',') : [];
+
+    const monthCondition = selectedMonthsArray.length > 0
+        ? `AND CAST(strftime('%m', dateTaken) AS INTEGER) IN (${selectedMonthsArray.map(() => '?').join(',')})`
+        : '';
+    const yearCondition = selectedYearsArray.length > 0
+        ? `AND strftime('%Y', dateTaken) IN (${selectedYearsArray.map(() => '?').join(',')})`
         : '';
 
     // Base query
@@ -304,10 +311,10 @@ app.get('/api/images/filter', (req, res) => {
     }
 
     // Add month condition
-    query += ` ${monthCondition} GROUP BY images.id ORDER BY images.dateTaken`;
+    query += ` ${monthCondition} ${yearCondition} GROUP BY images.id ORDER BY images.dateTaken ASC`;
 
-    // Parameters for the query
-    const params = [...includeTagsArray, ...excludeTagsArray, ...requiredTagsArray];
+    // Parameters for the query (included in order they're added to the query string)
+    const params = [...includeTagsArray, ...excludeTagsArray, ...requiredTagsArray, ...selectedMonthsArray, ...selectedYearsArray];
 
     // Execute query
     db.all(query, params, (err, rows) => {
@@ -403,6 +410,7 @@ app.get('/api/images/no-tags', (req, res) => {
         FROM images
         LEFT JOIN tags ON images.id = tags.imageId
         WHERE tags.imageId IS NULL
+        ORDER BY images.dateTaken ASC
     `;
 
     db.all(query, [], (err, rows) => {

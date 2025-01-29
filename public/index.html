@@ -15,6 +15,10 @@
             align-items: center;
         }
 
+        .greyback {
+            background: slategray;
+        }
+
         .tag {
             display: inline-block;
             padding: 8px 12px;
@@ -171,25 +175,10 @@
         <h2>Tags</h2>
         <div id="tags-container" class="form-group"></div>
         <h2>Months</h2>
-        <div class="form-group">
-            <label for="month">Select Month (Optional):</label>
-            <select id="month" name="month">
-                <option value="">-- Select Month --</option>
-                <option value="01">January</option>
-                <option value="02">February</option>
-                <option value="03">March</option>
-                <option value="04">April</option>
-                <option value="05">May</option>
-                <option value="06">June</option>
-                <option value="07">July</option>
-                <option value="08">August</option>
-                <option value="09">September</option>
-                <option value="10">October</option>
-                <option value="11">November</option>
-                <option value="12">December</option>
-            </select>
-        </div>
-        <button type="submit">Load Images</button>
+        <div id="months-container" class="form-group"></div>
+        <h2>Years</h2>
+        <div id="years-container" class="form-group"></div>
+        <button click="">Load Images</button>
     </form>
 
     <button id="load-untagged">Load Untagged Images</button>
@@ -215,6 +204,8 @@
     <script>
         document.addEventListener("DOMContentLoaded", async () => {
             const tagsContainer = document.getElementById("tags-container");
+            const monthsContainer = document.getElementById("months-container");
+            const yearsContainer = document.getElementById("years-container");
             const imagesContainer = document.getElementById("images");
             const slideshowBtn = document.getElementById("slideshow-btn");
             const randomSlideshowBtn = document.getElementById("random-slideshow-btn");
@@ -231,6 +222,8 @@
             const selectedIncludeTags = new Set();
             const selectedRequiredTags = new Set();
             const selectedExcludeTags = new Set();
+            const selectedMonths = new Set();
+            const selectedYears = new Set();
             let currentImages = [];
             let currentIndex = 0;
 
@@ -278,6 +271,55 @@
                     tagsContainer.appendChild(tagElement);
                 });
             };
+
+            const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+
+            const loadMonths = async () => {
+                MONTHS.forEach(month => {
+                    const monthElement = document.createElement('div');
+                    monthElement.textContent = month;
+                    monthElement.classList.add('tag');
+                    monthElement.addEventListener('click', () => {
+                        if (selectedMonths.has(month)) {
+                            selectedMonths.delete(month);
+                            monthElement.classList.remove('include');
+                        } else {
+                            selectedMonths.add(month);
+                            monthElement.classList.add('include');
+                        }
+                    });
+                    monthsContainer.appendChild(monthElement);
+                });
+            };
+
+            const GetMonthNumberArray = (selectedMonths) => {
+                return Array.from(selectedMonths).map(m => MONTHS.indexOf(m) + 1);
+            }
+
+            const loadYears = async () => {
+                const startYear = 2019;
+                const currentYear = new Date().getFullYear();
+                const years = Array.from({ length: currentYear - startYear + 1 }, (_, i) => startYear + i);
+
+                years.forEach(year => {
+                    const yearElement = document.createElement('div');
+                    yearElement.textContent = year;
+                    yearElement.classList.add('tag');
+                    yearElement.addEventListener('click', () => {
+                        if (selectedYears.has(year)) {
+                            selectedYears.delete(year);
+                            yearElement.classList.remove('include');
+                        } else {
+                            selectedYears.add(year);
+                            yearElement.classList.add('include');
+                        }
+                    });
+                    yearsContainer.appendChild(yearElement);
+                });
+            };
+
+            loadMonths();
+            loadYears();
 
             // Load images
             const loadImages = async (filters) => {
@@ -336,6 +378,25 @@
                     const tagElement = document.createElement('span');
                     tagElement.textContent = tag;
                     tagElement.classList.add('tag');
+                    tagElement.classList.add('greyback');
+
+                    tagElement.addEventListener('click', async (event) => {
+                        var imageId = image.id;
+                        var currentTag = tag;
+                        var element = tagElement;
+
+                        const userConfirmed = window.confirm(`Are you sure you want to delete ${currentTag} from this image?`);
+                        if (userConfirmed) {
+                            element.remove();
+                            await fetch(`/api/images/${image.id}/tags`, {
+                                method: 'DELETE',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ tag })
+                            });
+                        }
+
+                    });
+
                     focusedTags.appendChild(tagElement);
                 });
                 addTagsForm.onsubmit = async (e) => {
@@ -374,13 +435,13 @@
             // Form submission
             document.getElementById("filter-form").addEventListener("submit", async (e) => {
                 e.preventDefault();
-                const month = document.getElementById("month").value;
                 const filters = {
                     includeTags: Array.from(selectedIncludeTags).join(','),
                     excludeTags: Array.from(selectedExcludeTags).join(','),
                     requiredTags: Array.from(selectedRequiredTags).join(','),
+                    selectedMonths: GetMonthNumberArray(selectedMonths),
+                    selectedYears: Array.from(selectedYears).join(','),
                 };
-                if (month) filters.selectedMonth = month;
                 await loadImages(filters);
             });
 
