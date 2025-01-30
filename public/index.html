@@ -80,15 +80,15 @@
         }
 
         #focused-view .img-wrapper {
-            max-width: 90%;
-            max-height: 90%;
-            /* Adjusted for better spacing */
+            width: 90%;
+            height: 90%;
             margin-bottom: 20px;
         }
 
         #focused-view .img-wrapper img {
-            max-width: 100%;
-            max-height: 100%;
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
         }
 
         #add-tags-form {
@@ -193,8 +193,11 @@
     </div>
     <br />
     <button id="load-images">Load Images</button>
-
     <button id="load-untagged">Load Untagged Images</button>
+    <label>
+        <input type="checkbox" id="quick-mode"> Quick Mode
+    </label>
+
     <div id="images"></div>
     <button id="slideshow-btn" style="display: none;">Start Slideshow</button>
     <button id="random-slideshow-btn" style="display: none;">Start Random Slideshow</button>
@@ -232,6 +235,7 @@
             const nextButton = document.getElementById("next");
             const loadUntaggedButton = document.getElementById("load-untagged");
             const loadImagesButton = document.getElementById("load-images");
+            const quickModeCheckbox = document.getElementById('quick-mode');
 
             const selectedIncludeTags = new Set();
             const selectedRequiredTags = new Set();
@@ -240,6 +244,11 @@
             const selectedYears = new Set();
             let currentImages = [];
             let currentIndex = 0;
+            let quickMode = false;
+
+            quickModeCheckbox.addEventListener('change', () => {
+                quickMode = quickModeCheckbox.checked;
+            });
 
             // Load distinct tags
             const loadTags = async () => {
@@ -383,7 +392,7 @@
 
             // Focus on an image
             const focusImage = async (image) => {
-                focusedImage.src = `/images/${image.relativePath}`;
+                focusedImage.src = quickMode ? `/thumbnails/${image.relativePath}` : `/images/${image.relativePath}`;
                 focusedImageTitle.textContent = image.relativePath;
                 focusedTags.innerHTML = '';
                 const response = await fetch(`/api/images/${image.id}/tags`);

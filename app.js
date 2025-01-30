@@ -11,6 +11,7 @@ const app = express();
 const PORT = 8080;
 const IMAGE_DIR = '/mnt/usb/nas/images'; // Set your image directory here
 const THUMBNAIL_DIR = '/mnt/usb/nas/image_thumbnails';
+const DATABASE_PATH = '/mnt/usb/nas/imageDatabase.db';
 const PUBLIC_DIR = path.join(__dirname, 'public');
 
 // Ensure the thumbnail directory exists
@@ -36,7 +37,7 @@ function createThumbnail(imagePath, thumbnailPath) {
 }
 
 // SQLite3 database
-const db = new sqlite3.Database('./imageDatabase.db', (err) => {
+const db = new sqlite3.Database(DATABASE_PATH, (err) => {
     if (err) {
         console.error(err.message);
         process.exit(1);
@@ -70,6 +71,9 @@ db.exec(createTables, (err) => {
 app.use(express.static(PUBLIC_DIR));
 app.use(express.json());
 
+app.use('/images', express.static(IMAGE_DIR));
+app.use('/thumbnails', express.static(THUMBNAIL_DIR));
+
 // Parse date from filename or use file's last modified time
 function parseDateFromFilename(filename) {
     // Prefix could be IMG, MVIMG, PXL, etc. Example: PXL_12345678_123456123.jpg
@@ -79,7 +83,83 @@ function parseDateFromFilename(filename) {
         const dateStr = match[1] + match[2];
         return moment(dateStr, 'YYYYMMDDHHmmss').toISOString();
     }
+
+    const regexIPhone = /IMG(?:_E)?_(\d{8})_(\d{6})/; // ex. IMG_20240128_142530.JPG
+    const matchIPhone = filename.match(regexIPhone);
+
+    if (matchIPhone) {
+        const dateStr = matchIPhone[1] + matchIPhone[2];
+        return moment(dateStr, 'YYYYMMDDHHmmss').toISOString();
+    }
+
     return null;
+}
+
+// add an array of tags to an image
+function addImageTags(id, tags, callback) {
+    const insertTags = db.prepare('INSERT OR IGNORE INTO tags (imageId, tag) VALUES (?, ?)');
+    tags.forEach((tag) => {
+        tag = tag
+            .toLowerCase()
+            .trim()
+            .replace(/[^a-z0-9\-\s]/g, '')
+            .replace(/\s/g, '-');
+        if (tag.length > 0) {
+            insertTags.run(id, tag, (err) => {
+                if (err) {
+                    console.error('Error inserting tag:', err.message);
+                }
+            });
+        }
+    });
+    insertTags.finalize(callback);
+}
+
+function registerFile(filePath) {
+    const relativePath = path.relative(IMAGE_DIR, filePath);
+    const thumbnailPath = path.join(THUMBNAIL_DIR, relativePath);
+
+    const dateTaken = parseDateFromFilename(path.basename(filePath)) || fs.statSync(filePath).mtime.toISOString();
+
+    db.get('SELECT id FROM images WHERE relativePath = ?', [relativePath], (err, row) => {
+        if (err) {
+            console.error('Error querying database:', err.message);
+        } else if (!row) {
+
+            // Generate thumbnail at the same path, but within the thumbnail dir
+            if (!fs.existsSync(thumbnailPath)) {
+                createThumbnail(filePath, thumbnailPath);
+            }
+
+            db.run('INSERT INTO images (relativePath, dateTaken) VALUES (?, ?)', [relativePath, dateTaken], function (err) {
+                if (err) {
+                    console.error('Error inserting image:', err.message);
+                } else {
+                    const folderNames = path.dirname(relativePath).split(path.sep).filter(Boolean); // ["asd", "def"]
+                    const lastID = this.lastID;
+                    addImageTags(lastID, folderNames, () => { });
+                }
+            });
+        }
+    });
+}
+
+function unregisterFile(filePath) {
+    const relativePath = path.relative(IMAGE_DIR, filePath);
+    const thumbnailPath = path.join(THUMBNAIL_DIR, relativePath);
+
+    // Delete the thumbnail if it exists
+    fs.unlink(thumbnailPath, (err) => {
+        if (err && err.code !== 'ENOENT') {
+            console.error('Error deleting thumbnail:', err.message);
+        } else if (!err) {
+            console.log(`Deleted thumbnail: ${thumbnailPath}`);
+        }
+    });
+
+    db.run('DELETE FROM images WHERE relativePath = ?', [relativePath], (err) => {
+        if (err) console.error('Error deleting image:', err.message);
+    });
 }
 
 // Validate files and update the database
@@ -87,104 +167,27 @@ async function validateDatabaseAndFiles() {
     const files = fs.readdirSync(IMAGE_DIR);
     files.forEach((file) => {
         const filePath = path.join(IMAGE_DIR, file);
-        const stat = fs.statSync(filePath);
-        const dateTaken = parseDateFromFilename(file) || stat.mtime.toISOString();
-        const relativePath = path.relative(IMAGE_DIR, filePath);
-        const thumbnailPath = path.join(THUMBNAIL_DIR, relativePath);
-
-        if (!fs.existsSync(thumbnailPath)) {
-            createThumbnail(filePath, thumbnailPath);
+        const stats = fs.statSync(filePath);
+        if (stats && stats.isFile()) {
+            registerFile(filePath);
         }
-
-        db.get('SELECT id FROM images WHERE relativePath = ?', [relativePath], (err, row) => {
-            if (err) {
-                console.error('Error querying database:', err.message);
-            } else if (!row) {
-                db.run('INSERT INTO images (relativePath, dateTaken) VALUES (?, ?)', [relativePath, dateTaken], (err) => {
-                    if (err) console.error('Error inserting image:', err.message);
-                });
-            }
-        });
     });
 }
 
-// Watch directory for changes
+// Watch directory for changes (only care about file changes)
 function watchDirectory() {
-    const watcher = chokidar.watch(IMAGE_DIR, { persistent: true });
-
-    watcher.on('add', (filePath) => {
-        const relativePath = path.relative(IMAGE_DIR, filePath);
-        const thumbnailPath = path.join(THUMBNAIL_DIR, relativePath);
-
-        const dateTaken = parseDateFromFilename(path.basename(filePath)) || fs.statSync(filePath).mtime.toISOString();
-
-        db.get('SELECT id FROM images WHERE relativePath = ?', [relativePath], (err, row) => {
-            if (err) {
-                console.error('Error querying database:', err.message);
-            } else if (!row) {
-
-                // Generate thumbnail at the same path, but within the thumbnail dir
-                createThumbnail(filePath, thumbnailPath);
-
-                db.run('INSERT INTO images (relativePath, dateTaken) VALUES (?, ?)', [relativePath, dateTaken], (err) => {
-                    if (err && err.code !== 'SQLITE_CONSTRAINT') {
-                        console.error('Error inserting image:', err.message);
-                    }
-                });
-            }
-        });
-    });
-
-    watcher.on('unlink', (filePath) => {
-        const relativePath = path.relative(IMAGE_DIR, filePath);
-        const thumbnailPath = path.join(THUMBNAIL_DIR, relativePath);
-
-        // Delete the thumbnail if it exists
-        fs.unlink(thumbnailPath, (err) => {
-            if (err && err.code !== 'ENOENT') {
-                console.error('Error deleting thumbnail:', err.message);
-            } else if (!err) {
-                console.log(`Deleted thumbnail: ${thumbnailPath}`);
-            }
-        });
-
-        db.run('DELETE FROM images WHERE relativePath = ?', [relativePath], (err) => {
-            if (err) console.error('Error deleting image:', err.message);
-        });
-    });
-}
-
-// Get all files in ID order
-app.get('/api/images/all', (req, res) => {
-    db.all('SELECT * FROM images ORDER BY dateTaken ASC', [], (err, rows) => {
-        if (err) {
-            res.status(500).json({ error: 'Database error' });
-        } else {
-            res.json(rows);
+    const watcher = chokidar.watch(IMAGE_DIR, { persistent: true, depth: 10, alwaysStat: true });
+    watcher.on('add', (filePath, stats) => {
+        if (stats && stats.isFile()) {
+            registerFile(filePath);
         }
     });
-});
-
-
-// Serve images
-app.get('/images/:filename', (req, res) => {
-    const imagePath = path.join(IMAGE_DIR, req.params.filename);
-    if (fs.existsSync(imagePath)) {
-        res.sendFile(imagePath);
-    } else {
-        res.status(404).send('Image not found');
-    }
-});
-
-app.get('/thumbnails/:filename', (req, res) => {
-    const thumbnailPath = path.join(THUMBNAIL_DIR, req.params.filename);
-
-    if (fs.existsSync(thumbnailPath)) {
-        res.sendFile(thumbnailPath);
-    } else {
-        res.status(404).send('Thumbnail not found');
-    }
-});
+    watcher.on('unlink', (filePath, stats) => {
+        if (stats && stats.isFile()) {
+            unregisterFile(filePath);
+        }
+    });
+}
 
 // Query for images by date range
 app.get('/api/images/date-range', (req, res) => {
@@ -253,7 +256,7 @@ app.get('/api/images/tags', (req, res) => {
     );
 });
 
-// Endpoint to filter images by includeTags, excludeTags, and optionally selectedMonth
+// Endpoint to filter images by includeTags, excludeTags, selected months, and selected years
 app.get('/api/images/filter', (req, res) => {
     const { includeTags, excludeTags, requiredTags, selectedMonths, selectedYears } = req.query;
 
@@ -353,20 +356,7 @@ app.post('/api/images/:id/tags', (req, res) => {
         return res.status(400).json({ error: 'Tags must be an array' });
     }
 
-    const insertTags = db.prepare('INSERT OR IGNORE INTO tags (imageId, tag) VALUES (?, ?)');
-    tags.forEach((tag) => {
-        tag = tag
-            .toLowerCase()
-            .trim()
-            .replace(/[^a-z0-9\s]/g, '')
-            .replace(/\s/g, '-');
-        insertTags.run(id, tag, (err) => {
-            if (err) {
-                console.error('Error inserting tag:', err.message);
-            }
-        });
-    });
-    insertTags.finalize(() => res.status(200).send('Tags added successfully (duplicates ignored)'));
+    addImageTags(id, tags, () => res.status(200).send('Tags added successfully (duplicates ignored)'));
 });
 
 // Remove a tag from an image
