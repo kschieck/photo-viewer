@@ -14,6 +14,8 @@ const THUMBNAIL_DIR = '/mnt/usb/nas/image_thumbnails';
 const DATABASE_PATH = '/mnt/usb/nas/imageDatabase.db';
 const PUBLIC_DIR = path.join(__dirname, 'public');
 
+const FILE_STABILITY_DELAY = 1000; // millis, delay between checks on each pending file
+
 // Ensure the thumbnail directory exists
 if (!fs.existsSync(THUMBNAIL_DIR)) {
     fs.mkdirSync(THUMBNAIL_DIR, { recursive: true });
@@ -174,12 +176,43 @@ async function validateDatabaseAndFiles() {
     });
 }
 
+const pendingFiles = new Map(); // Track files being processed
+function waitForFileStability(filePath, callback) {
+    if (pendingFiles.has(filePath)) {
+        clearTimeout(pendingFiles.get(filePath)); // Reset timer if event fires again
+    }
+
+    const checkFile = () => {
+        fs.stat(filePath, (err, stats) => {
+            if (err) {
+                console.error('Error checking file status:', err.message);
+                pendingFiles.delete(filePath);
+                return;
+            }
+
+            const lastSize = pendingFiles.get(filePath)?.size || 0;
+            if (stats.size > lastSize) {
+                // File is still growing, wait a bit longer
+                pendingFiles.set(filePath, { size: stats.size, timeout: setTimeout(checkFile, FILE_STABILITY_DELAY) });
+            } else if (stats.size > 0) {
+                // File has stopped growing, process it (as long as it's not completely empty)
+                pendingFiles.delete(filePath);
+                callback();
+            }
+        });
+    };
+
+    // Start stability check
+    pendingFiles.set(filePath, { size: 0, timeout: setTimeout(checkFile, FILE_STABILITY_DELAY) });
+}
+
 // Watch directory for changes (only care about file changes)
 function watchDirectory() {
     const watcher = chokidar.watch(IMAGE_DIR, { persistent: true, depth: 10, alwaysStat: true });
+
     watcher.on('add', (filePath, stats) => {
         if (stats && stats.isFile()) {
-            registerFile(filePath);
+            waitForFileStability(filePath, () => registerFile(filePath));
         }
     });
     watcher.on('unlink', (filePath, stats) => {
