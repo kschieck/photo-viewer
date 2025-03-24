@@ -196,29 +196,31 @@ export default function App() {
     const months = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 
     function handleTagChange(tag, newState) {
-        let newTagSelections = { ...tagSelections };
-        newTagSelections[tag] = newState;
-        setTagSelections(newTagSelections);
+        setTagSelections(prev => ({ ...prev, [tag]: newState }));
     }
 
     function handleMonthChange(tag, newState) {
-        let newSelectedMonths = new Set(selectedMonths);
-        if (newState == "") {
-            newSelectedMonths.delete(tag);
-        } else {
-            newSelectedMonths.add(tag);
-        }
-        setSelectedMonths(newSelectedMonths);
+        setSelectedMonths(prev => {
+            const newSelectedMonths = new Set(prev);
+            if (newState) {
+                newSelectedMonths.add(tag);
+            } else {
+                newSelectedMonths.delete(tag);
+            }
+            return newSelectedMonths;
+        });
     }
 
     function handleYearChange(tag, newState) {
-        let newSelectedYears = new Set(selectedYears);
-        if (newState == "") {
-            newSelectedYears.delete(tag);
-        } else {
-            newSelectedYears.add(tag);
-        }
-        setSelectedYears(newSelectedYears);
+        setSelectedYears(prev => {
+            const newSelectedYears = new Set(prev);
+            if (newState) {
+                newSelectedYears.add(tag);
+            } else {
+                newSelectedYears.delete(tag);
+            }
+            return newSelectedYears;
+        });
     }
 
     function handleSearch() {
