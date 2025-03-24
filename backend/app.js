@@ -6,8 +6,12 @@ const path = require('path');
 const chokidar = require('chokidar'); // for watching the images directory
 const moment = require('moment');
 const sharp = require('sharp'); // For creating image thumbnails
+const ffmpeg = require('fluent-ffmpeg'); // for creating video thumbnails
+const cors = require('cors');
 
 const app = express();
+app.use(cors()); // Allow all origins
+
 const PORT = 8080;
 const IMAGE_DIR = '/mnt/usb/nas/images'; // Set your image directory here
 const THUMBNAIL_DIR = '/mnt/usb/nas/image_thumbnails';
@@ -16,13 +20,24 @@ const PUBLIC_DIR = path.join(__dirname, 'public');
 
 const FILE_STABILITY_DELAY = 1000; // millis, delay between checks on each pending file
 
+const imageRegex = /\.(jpe?g|png|gif|bmp|webp|tiff|heic|avif)$/i;
+const videoRegex = /\.(mp4|mkv|mov|avi|wmv|flv|webm|mpeg|mpg)$/i;
+
 // Ensure the thumbnail directory exists
 if (!fs.existsSync(THUMBNAIL_DIR)) {
     fs.mkdirSync(THUMBNAIL_DIR, { recursive: true });
 }
 
+function isImage(fileName) {
+    return imageRegex.test(fileName);
+}
+
+function isVideo(fileName) {
+    return videoRegex.test(fileName);
+}
+
 // Generate a thumbnail for an image
-function createThumbnail(imagePath, thumbnailPath) {
+async function createThumbnail(imagePath, thumbnailPath) {
     const dir = path.dirname(thumbnailPath);
 
     // Ensure the directory exists
@@ -30,12 +45,39 @@ function createThumbnail(imagePath, thumbnailPath) {
         fs.mkdirSync(dir, { recursive: true }); // Create the directory and all necessary subdirectories
     }
 
+    const fileName = path.basename(imagePath);
+
     // Generate the thumbnail
-    sharp(imagePath)
-        .resize({ width: 200, height: 200, fit: 'inside' }) // Adjust logic as needed
-        .toFile(thumbnailPath)
-        .then(() => console.log(`Thumbnail created: ${thumbnailPath}`))
-        .catch((err) => console.error(`Error creating thumbnail: ${err.message}`));
+    if (isImage(fileName)) {
+
+        return sharp(imagePath)
+            .resize({ width: 200, height: 200, fit: 'inside' }) // Adjust logic as needed
+            .toFile(thumbnailPath)
+            .then(() => console.log(`Thumbnail created: ${thumbnailPath}`))
+            .catch((err) => console.error(`Error creating thumbnail: ${err.message}`));
+
+    } else if (isVideo(fileName)) {
+
+        new Promise((resolve, reject) => {
+            ffmpeg(imagePath)
+                .frames(1) // Extract only 1 frame
+                .outputOptions([
+                    "-vf", "scale='if(gt(iw,ih),200,-1)':'if(gt(iw,ih),-1,200)'", // Resize while maintaining aspect ratio
+                    "-q:v", "2", // High-quality output
+                    "-pix_fmt", "yuvj420p" // Ensures compatibility with JPEG
+                ])
+                .output(thumbnailPath) // Ensure the output path is correct and has .jpg or .png extension
+                .on("end", () => {
+                    console.log(`Thumbnail created: ${thumbnailPath}`);
+                    resolve(thumbnailPath);
+                })
+                .on("error", (err) => reject(err))
+                .run();
+        });
+
+    } else {
+        return Promise.reject(new Error("Error failed to create thumbnail: " + filePath));
+    }
 }
 
 // SQLite3 database
@@ -99,6 +141,10 @@ function parseDateFromFilename(filename) {
 
 // add an array of tags to an image
 function addImageTags(id, tags, callback) {
+    if (tags.length == 0) {
+        callback();
+        return;
+    }
     const insertTags = db.prepare('INSERT OR IGNORE INTO tags (imageId, tag) VALUES (?, ?)');
     tags.forEach((tag) => {
         tag = tag
@@ -117,31 +163,65 @@ function addImageTags(id, tags, callback) {
     insertTags.finalize(callback);
 }
 
-function registerFile(filePath) {
+function getThumbnailPath(filePath) {
+    const fileName = path.basename(filePath);
     const relativePath = path.relative(IMAGE_DIR, filePath);
-    const thumbnailPath = path.join(THUMBNAIL_DIR, relativePath);
+    const baseThumbnailPath = path.join(THUMBNAIL_DIR, relativePath);
 
-    const dateTaken = parseDateFromFilename(path.basename(filePath)) || fs.statSync(filePath).mtime.toISOString();
+    if (isImage(fileName)) {
+        return baseThumbnailPath;
+    } else if (isVideo(fileName)) {
+        return path.format({
+            dir: path.dirname(baseThumbnailPath), // Preserve the folder structure
+            name: path.parse(fileName).name, // Get filename without extension
+            ext: '.jpg' // Video thumbnails are stored as JPGs
+        });
+    } else {
+        console.error('Error: Invalid file type:', filePath);
+        return null; // Explicitly return null for invalid types
+    }
+}
+
+function registerFile(filePath) {
+    const fileName = path.basename(filePath);
+    const relativePath = path.relative(IMAGE_DIR, filePath);
+    const thumbnailPath = getThumbnailPath(filePath);
+
+    if (thumbnailPath == null) {
+        console.error('Error failed to get thumbnail path:', filePath);
+        return;
+    }
+
+    const dateTaken = parseDateFromFilename(fileName) || fs.statSync(filePath).mtime.toISOString();
 
     db.get('SELECT id FROM images WHERE relativePath = ?', [relativePath], (err, row) => {
         if (err) {
             console.error('Error querying database:', err.message);
-        } else if (!row) {
+        } else {
 
             // Generate thumbnail at the same path, but within the thumbnail dir
             if (!fs.existsSync(thumbnailPath)) {
-                createThumbnail(filePath, thumbnailPath);
+                createThumbnail(filePath, thumbnailPath)
+                    .catch(e => console.error(e));
             }
 
-            db.run('INSERT INTO images (relativePath, dateTaken) VALUES (?, ?)', [relativePath, dateTaken], function (err) {
-                if (err) {
-                    console.error('Error inserting image:', err.message);
-                } else {
-                    const folderNames = path.dirname(relativePath).split(path.sep).filter(Boolean); // ["asd", "def"]
-                    const lastID = this.lastID;
-                    addImageTags(lastID, folderNames, () => { });
-                }
-            });
+            // If there is no record of this image, create one
+            if (!row) {
+                db.run('INSERT INTO images (relativePath, dateTaken) VALUES (?, ?)', [relativePath, dateTaken], function (err) {
+                    if (err) {
+                        console.error('Error inserting image:', err.message);
+                    } else {
+                        // Add folder names as tags to images
+                        const folderNames = path.dirname(relativePath).split(path.sep).filter(Boolean); // ["asd", "def"]
+
+                        // Add "video" tag to video files
+                        const TypeTags = isVideo(fileName) ? ["video"] : [];
+
+                        const lastID = this.lastID;
+                        addImageTags(lastID, [...folderNames, ...TypeTags], () => { });
+                    }
+                });
+            }
         }
     });
 }
