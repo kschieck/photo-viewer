@@ -1,7 +1,5 @@
 import { useState, useEffect } from 'react';
 
-const URL_BASE = "";
-
 function SelectableTagContainer({ tags, containerSelectionType = "explicit", updateTagState }) {
     // containerSelectionType one of "explicit" (for tags) or "include" (for dates)
 
@@ -92,7 +90,7 @@ function FocusView({ image, onCloseClick, onNextClick }) {
         newTagsData.forImage = image.id;
         newTagsData.tags = [];
         setTagsData(newTagsData);
-        fetch(`${URL_BASE}/api/images/${image.id}/tags`)
+        fetch(`/api/images/${image.id}/tags`)
             .then(response => response.json())
             .then(json => setTagsData({ tags: json, forImage: image.id }))
             .catch(error => console.error(error));
@@ -108,7 +106,7 @@ function FocusView({ image, onCloseClick, onNextClick }) {
         newTagsData.tags = newTags;
         setTagsData(newTagsData);
 
-        fetch(`${URL_BASE}/api/images/${image.id}/tags`, { // TODO url
+        fetch(`/api/images/${image.id}/tags`, {
             method: 'DELETE',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ tag })
@@ -136,8 +134,8 @@ function FocusView({ image, onCloseClick, onNextClick }) {
     return <div id="focused-view">
         <button id="close-focused-view" onClick={onCloseClick}>Close</button>
         <div className="img-wrapper">
-            {isImage && <img key={image.id} alt="Focused View" src={`${URL_BASE}/images/${image.relativePath}`} />}
-            {isVideo && <video controls loop src={`${URL_BASE}/images/${image.relativePath}`} />}
+            {isImage && <img key={image.id} alt="Focused View" src={`/images/${image.relativePath}`} />}
+            {isVideo && <video controls loop src={`/images/${image.relativePath}`} />}
             <div id="focused-title">
                 {image.relativePath}
                 <br />
@@ -159,7 +157,7 @@ function AddTagForm({ onTagsAdded, imageId }) {
         const values = Object.fromEntries(formData.entries());
         let newTags = values["new-tags"].split(',').map(t => t.toLowerCase().trim());
 
-        fetch(`${URL_BASE}/api/images/${imageId}/tags`, { // TODO url
+        fetch(`/api/images/${imageId}/tags`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ tags: newTags })
@@ -186,7 +184,7 @@ export default function App() {
 
     // Load all existing tags
     useEffect(() => {
-        fetch(`${URL_BASE}/api/tags`) // TODO only use relative path
+        fetch(`/api/tags`)
             .then(response => response.json())
             .then(json => setTags(json))
             .catch(error => console.error(error));
@@ -233,7 +231,7 @@ export default function App() {
         };
 
         const queryParams = new URLSearchParams(params).toString();
-        fetch(`${URL_BASE}/api/images/filter?${queryParams}`) // TODO relative path
+        fetch(`/api/images/filter?${queryParams}`)
             .then(response => response.json())
             .then(json => setImages(json))
             .catch(error => console.error(error));
@@ -263,7 +261,7 @@ export default function App() {
     let imageRenderers = images.map((img) =>
         <div className="image-container" key={img.id}>
             <img
-                src={`${URL_BASE}/thumbnails/${img.relativePath.replace(/\.[^/.]+$/, ".jpg")}`} // TODO relative path
+                src={`/thumbnails/${img.relativePath.replace(/\.[^/.]+$/, ".jpg")}`}
                 loading="lazy"
                 onClick={() => focusImage(img)} />
         </div>
